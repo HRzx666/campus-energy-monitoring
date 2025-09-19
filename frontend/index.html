@@ -1,0 +1,1097 @@
+<!DOCTYPE html>
+<html lang="zh">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0"/>
+  <title>校园能耗监控系统</title>
+  <script src="https://cdn.jsdelivr.net/npm/echarts@5/dist/echarts.min.js"></script>
+  <style>
+    :root { --primary:#1f2937; --accent:#3b82f6; --danger:#ef4444; --radius:12px; --soft:#e5e7eb; }
+    *{box-sizing:border-box}
+    body{margin:0;background:#f7f7fb;font-family:system-ui,-apple-system,Segoe UI,Roboto,Helvetica,Arial}
+    header{background:var(--primary);color:#fff;padding:14px 20px;display:flex;align-items:center;justify-content:space-between}
+    .tabs{display:flex;gap:8px}
+    .tab{border:none;padding:10px 14px;border-radius:10px;background:#374151;color:#fff;cursor:pointer}
+    .tab.active{background:var(--accent)}
+    .panel{padding:12px 20px;display:grid;grid-template-columns:120px 1fr 380px;gap:16px}
+    .card{background:#fff;border-radius:14px;box-shadow:0 6px 20px rgba(0,0,0,.06);padding:14px}
+    #chart{width:100%;height:520px}
+
+    /* ===== 控制面板美化（右侧） ===== */
+    .controls{display:grid;gap:10px}
+    .controls .card{padding:16px 14px}
+    .row{display:flex;gap:10px;flex-wrap:wrap;align-items:center}
+    .row label{font-size:12px;color:#374151;margin-right:2px;min-width:40px;text-align:right}
+
+    /* 统一控件尺寸与交互反馈 */
+    input,select,button{height:38px;padding:8px 12px;border-radius:var(--radius);border:1px solid var(--soft);background:#fff;font-size:14px}
+    input[type="number"]{appearance:textfield}
+    input::-webkit-outer-spin-button,input::-webkit-inner-spin-button{appearance:none;margin:0}
+    button{cursor:pointer;line-height:1}
+    button:focus, input:focus, select:focus{outline:none;box-shadow:0 0 0 3px rgba(59,130,246,.25);border-color:var(--accent)}
+
+    /* 主次按钮 */
+    button.primary{background:var(--accent);border-color:var(--accent);color:#fff}
+    button.primary:hover{filter:brightness(0.98)}
+    button.ghost{background:#fff;border-color:var(--soft);color:#111827}
+    button.ghost:hover{background:#f3f4f6}
+
+    /* —— 分段控件：日/周/月 —— */
+    .row .ghost[data-range]{border-color:var(--soft);border-radius:10px;min-width:56px;justify-content:center;display:inline-flex;align-items:center}
+    .row .ghost[data-range] + .ghost[data-range]{margin-left:-1px;border-top-left-radius:0;border-bottom-left-radius:0}
+    .row .ghost[data-range]:first-child{border-top-right-radius:0;border-bottom-right-radius:0}
+    .row .ghost[data-range]:last-child{border-top-left-radius:0;border-bottom-left-radius:0}
+    .row .ghost[data-range].active{background:var(--accent);color:#fff;border-color:var(--accent);box-shadow:0 4px 12px rgba(59,130,246,.2)}
+
+    /* 表单行：时间区间与价格行更整齐 */
+    .controls .card .row.range-line{gap:0}
+    .controls .card .row.range-line .ghost[data-range]{flex:1;min-width:0}
+
+    .controls .card .row.time-line label{min-width:36px}
+    .controls .card .row.time-line input{flex:1;min-width:160px}
+    .controls .card .row.time-line button{margin-left:auto}
+
+    .controls .card .row.price-line label{min-width:72px}
+    .controls .card .row.price-line input{width:110px}
+    .controls .card .row.price-line button{margin-left:auto}
+
+    .muted{color:#6b7280;font-size:12px}
+
+    /* 左侧图表切换 */
+    .chart-switch{display:flex;flex-direction:column;gap:10px}
+    .chart-btn{padding:10px;border:none;border-radius:10px;background:#e5e7eb;cursor:pointer}
+    .chart-btn.active{background:var(--accent);color:#fff}
+
+    .value-box{font-size:40px;font-weight:700;line-height:1.2;display:flex;align-items:baseline;gap:6px}
+    .unit{font-size:14px;color:#6b7280}
+    .flash{animation:flash 0.35s ease-in-out 5; color:var(--danger) !important;}
+    @keyframes flash{0%{filter:none}50%{filter:brightness(1.8)}100%{filter:none}}
+
+    /* 预测提示 */
+    .forecast-usage{font-size:12px;color:#475569;margin-top:6px}
+
+    /* ===== 预测区（与原图等高） ===== */
+    .forecast-box{display:none;margin-top:12px;border:1px solid var(--soft);border-radius:12px;padding:10px 12px}
+    .forecast-box h3{margin:4px 0 8px 0;font-size:15px;color:#374151}
+    #forecastChart{width:100%;height:520px;} /* 初始给 520，JS 会自动同步为与 #chart 等高 */
+  </style>
+</head>
+<body>
+<header>
+  <div style="font-weight:700">校园能耗监控系统</div>
+  <div class="tabs">
+    <button class="tab active" data-type="electric">电</button>
+    <button class="tab" data-type="water">水</button>
+    <button class="tab" data-type="gas">气</button>
+  </div>
+</header>
+
+<section class="panel">
+  <!-- 左侧图表切换 -->
+  <div class="chart-switch">
+    <button class="chart-btn active" data-chart="line">折线图</button>
+    <button class="chart-btn" data-chart="pie-current">当前占比</button>
+    <button class="chart-btn" data-chart="pie-period">分时占比</button>
+    <button class="chart-btn" data-chart="bar-usage">月用量柱状图</button>
+  </div>
+
+  <!-- 中间图表 -->
+  <div class="card">
+    <div id="chart"></div>
+
+    <!-- ✅ 通用预测图（与原图等高；仅按当前图类型预测） -->
+    <div id="forecastBox" class="forecast-box">
+      <h3 id="forecastTitle">预测图表</h3>
+      <div id="forecastChart"></div>
+      <div id="forecastMsg" class="forecast-usage">—</div>
+    </div>
+  </div>
+
+  <!-- 右侧控制面板 -->
+  <div class="controls">
+    <div class="card">
+      <div class="muted">实时数值</div>
+      <div id="realtime" class="value-box">
+        <span id="rtValue">--</span>
+        <span class="unit" id="unit"></span>
+      </div>
+      <div class="row" style="margin-top:8px">
+        <label>阈值</label>
+        <input id="threshold" type="number" step="0.1" value="10"/>
+        <button class="ghost" id="applyThreshold">应用</button>
+      </div>
+      <div class="muted" id="hint">超过阈值时数字将变红并闪烁 2 秒</div>
+    </div>
+
+    <div class="card">
+      <div class="row range-line">
+        <button class="ghost" data-range="day">日</button>
+        <button class="ghost" data-range="week">周</button>
+        <button class="ghost" data-range="month">月</button>
+      </div>
+      <div class="row time-line">
+        <label>开始</label><input type="datetime-local" id="startInput">
+        <label>结束</label><input type="datetime-local" id="endInput">
+        <button class="primary" id="applyRange">应用</button>
+      </div>
+      <div class="row">
+        <label>显示粒度</label>
+        <select id="gran">
+          <option value="30">30 秒</option>
+          <option value="60" selected>1 分钟</option>
+          <option value="300">5 分钟</option>
+        </select>
+      </div>
+      <div class="row price-line">
+        <label>电价(元/kWh)</label><input id="priceElectric" type="number" step="0.01" value="0.60">
+        <label>水价(元/m³)</label><input id="priceWater" type="number" step="0.01" value="3.00">
+        <label>气价(元/m³)</label><input id="priceGas" type="number" step="0.01" value="3.00">
+        <button class="primary" id="applyPrice">应用</button>
+      </div>
+
+      <!-- 预测控制区 -->
+      <div class="row">
+        <label>预测时长</label>
+        <select id="forecastHorizon">
+          <option value="24">24 小时</option>
+          <option value="48">48 小时</option>
+          <option value="168">7 天</option>
+          <option value="720">30 天</option>
+        </select>
+        <label>步长</label>
+        <select id="forecastFreq">
+          <option value="H">1 小时</option>
+          <option value="15min">15 分钟</option>
+        </select>
+        <button class="primary" id="btnForecast">开始预测</button>
+        <button class="ghost" id="btnClearForecast">清除预测</button>
+      </div>
+      <div class="forecast-usage" id="forecastUsageHint">—</div>
+
+      <div class="muted">饼图基于最近30天数据，采用费用当量法：用量×单价。</div>
+      <div class="row">
+        <button class="ghost" id="btnCsv">导出 CSV</button>
+        <button class="ghost" id="btnPng">保存图表 PNG</button>
+      </div>
+    </div>
+  </div>
+</section>
+
+<script>
+/** ===== 常量与状态 ===== */
+const TYPE_UNITS = { electric: 'kW', water: 'L/min', gas: 'm³/h' };
+const DEFAULT_THRESHOLDS = { electric: 10, water: 10, gas: 10 };
+let prices = { electric: 0.60, water: 3.00, gas: 3.00 }; // 元/kWh, 元/m³, 元/m³
+
+let activeType = 'electric';   // 折线图所选能源
+let activeChart = 'line';      // line | pie-current | pie-period | bar-usage
+let activeRange = 'day';       // 日/周/月（用于坐标标签显示）
+let threshold = DEFAULT_THRESHOLDS[activeType];
+
+let dataCache = { electric: [], water: [], gas: [] }; // /api/history 缓存 (当前视图范围)
+let pieCache30d = { electric: [], water: [], gas: [] }; // 最近30天缓存
+let lastRtTs = 0;  // 实时值时间戳防回退
+let rtReqId = 0;   // 实时值请求防并发覆盖
+
+// ✅ 预测缓存（按需拉取）
+let forecastCache = { electric: null, water: null, gas: null };
+let lastForecastParams = { horizon: null, freq: null };
+
+/** ===== 图表实例 ===== */
+const chart = echarts.init(document.getElementById('chart'));
+const forecastChart = echarts.init(document.getElementById('forecastChart'));
+
+/** ===== （柱状图悬停事件解绑管理） ===== */
+let barHoverHandler = null;
+let barGlobalOutHandler = null;
+let lastHoverValue = null;
+function detachBarHoverEvents(){
+  if (barHoverHandler){ chart.off('mouseover', barHoverHandler); barHoverHandler = null; }
+  if (barGlobalOutHandler){ chart.off('globalout', barGlobalOutHandler); barGlobalOutHandler = null; }
+  lastHoverValue = null;
+  try{ chart.setOption({ graphic: [] }); }catch(e){}
+}
+
+/** ===== 工具函数 ===== */
+function pad(n){return n<10? '0'+n : n}
+function toLocal(dt){
+  const d=new Date(dt);
+  return `${d.getFullYear()}-${pad(d.getMonth()+1)}-${pad(d.getDate())}T${pad(d.getHours())}:${pad(d.getMinutes())}:${pad(d.getSeconds())}`;
+}
+function setInputs(start, end){
+  document.getElementById('startInput').value = toLocal(start);
+  document.getElementById('endInput').value = toLocal(end);
+}
+function getRange(){
+  const e=document.getElementById('endInput').value;
+  const end=e?new Date(e):new Date();
+  const s=document.getElementById('startInput').value;
+  const start=s?new Date(s):new Date(end.getTime()-24*3600*1000);
+  return {start,end};
+}
+function hoursToLabel(h){
+  const n = Number(h);
+  if (n===24 || n===48) return `${n}小时`;
+  if (n===168) return '7天';
+  if (n===720) return '30天';
+  return `未来${n}小时`;
+}
+function typeName(t){ return t==='electric'?'电':t==='水'?'水':'气'; }
+
+/** ===== 新增：让预测图与原图等高 ===== */
+function syncForecastHeight(){
+  const main = document.getElementById('chart');
+  const fore = document.getElementById('forecastChart');
+  if (!main || !fore) return;
+  const h = main.clientHeight || 520;
+  fore.style.height = h + 'px';
+  forecastChart.resize();
+}
+
+/** ===== 坐标轴标签（折线图） ===== */
+function formatAxisLabel(value) {
+  const date = new Date(value);
+  if (activeRange === 'day') {
+    return `${date.getHours()}:${String(date.getMinutes()).padStart(2,'0')}`;
+  }
+  if (activeRange === 'week') {
+    return `${date.getMonth()+1}-${date.getDate()}`;
+  }
+  if (activeRange === 'month') {
+    const weekNum = Math.ceil(date.getDate() / 7);
+    return `${date.getMonth()+1}月第${weekNum}周`;
+  }
+  return '';
+}
+
+/** ===== 缩放改变粒度标签（仅折线图时） ===== */
+chart.on('dataZoom', () => {
+  if (activeChart !== 'line') return;
+  const xModel = chart.getModel().getComponent('xAxis', 0);
+  if (!xModel) return;
+  const axis = xModel.axis;
+  const extent = axis.scale.getExtent();
+  const span = extent[1] - extent[0];
+  if (span < 2*24*3600*1000) activeRange = 'day';
+  else if (span < 30*24*3600*1000) activeRange = 'week';
+  else activeRange = 'month';
+  chart.setOption({ xAxis: { axisLabel: { formatter: formatAxisLabel } } });
+});
+
+/** ===== 实时数值（防回退+闪红） ===== */
+function updateRealtimeValue(val, tsMs){
+  if (typeof tsMs === 'number' && tsMs < lastRtTs) return;
+  lastRtTs = typeof tsMs === 'number' ? tsMs : Date.now();
+  document.getElementById('rtValue').textContent = Number(val).toFixed(2);
+  document.getElementById('unit').innerText = TYPE_UNITS[activeType];
+
+  if (Number(val) > Number(threshold)){
+    const rt = document.getElementById('realtime');
+    rt.classList.remove('flash');
+    void rt.offsetWidth;
+    rt.classList.add('flash');
+    setTimeout(()=> rt.classList.remove('flash'), 2000);
+  }
+}
+
+/** ===== 线图重采样（平均） ===== */
+function resample(data, intervalSec, mode='avg'){
+  if(!data || data.length===0) return [];
+  const buckets = new Map();
+  for (const p of data){
+    const t = new Date(p.timestamp).getTime();
+    const key = Math.floor(t / (intervalSec*1000)) * intervalSec*1000;
+    const arr = buckets.get(key) || [];
+    arr.push(p.value);
+    buckets.set(key, arr);
+  }
+  return Array.from(buckets.entries()).sort((a,b)=>a[0]-b[0]).map(([t, arr])=>{
+    let v;
+    if (mode === 'max') v = Math.max(...arr);
+    else v = arr.reduce((x,y)=>x+y,0)/arr.length;
+    return [t, Number(v.toFixed(3))];
+  });
+}
+
+/** ====== 费用当量法积分（最近30天） ====== */
+function integrateCostLast30Days(){
+  const now = new Date();
+  const start = new Date(now.getTime() - 30*24*3600*1000);
+  const weekMs = 7*24*3600*1000;
+
+  const result = { total:{electric:0, water:0, gas:0}, weekly:[0,0,0,0] };
+
+  ['electric','water','gas'].forEach(type=>{
+    const source = (pieCache30d[type] && pieCache30d[type].length) ? pieCache30d[type] : (dataCache[type]||[]);
+    const raw = source
+      .map(d=>({t:new Date(d.timestamp).getTime(), v:Number(d.value)}))
+      .filter(d=>d.t>=start.getTime() && d.t<=now.getTime())
+      .sort((a,b)=>a.t-b.t);
+
+    for(let i=1;i<raw.length;i++){
+      const t0 = raw[i-1].t, t1 = raw[i].t;
+      const v0 = raw[i-1].v, v1 = raw[i].v;
+      const dtMs = t1 - t0; if(dtMs<=0) continue;
+
+      if (type==='electric'){
+        const hours = dtMs/3600000;
+        const avgKW = (v0+v1)/2;
+        const amount = avgKW * hours; // kWh
+        const fee = amount * prices.electric;
+        result.total.electric += fee;
+
+        const mid = (t0 + t1)/2;
+        let idx = Math.floor((mid - start.getTime())/weekMs);
+        if (idx<0) idx=0; if (idx>3) idx=3;
+        result.weekly[idx] += fee;
+      }
+      if (type==='water'){
+        const minutes = dtMs/60000;
+        const avgLpm = (v0+v1)/2;
+        const volume_m3 = (avgLpm * minutes) / 1000; // L → m³
+        const fee = volume_m3 * prices.water;
+        result.total.water += fee;
+
+        const mid=(t0+t1)/2;
+        let idx = Math.floor((mid - start.getTime())/weekMs);
+        if (idx<0) idx=0; if (idx>3) idx=3;
+        result.weekly[idx] += fee;
+      }
+      if (type==='gas'){
+        const hours = dtMs/3600000;
+        const avg_m3ph = (v0+v1)/2;
+        const volume_m3 = avg_m3ph * hours;
+        const fee = volume_m3 * prices.gas;
+        result.total.gas += fee;
+
+        const mid=(t0+t1)/2;
+        let idx = Math.floor((mid - start.getTime())/weekMs);
+        if (idx<0) idx=0; if (idx>3) idx=3;
+        result.weekly[idx] += fee;
+      }
+    }
+  });
+
+  return result;
+}
+
+/** ====== 用量积分（最近30天，总量） ====== */
+function integrateUsageLast30Days(){
+  const now = new Date();
+  const start = new Date(now.getTime() - 30*24*3600*1000);
+  const totals = { electric:0, water:0, gas:0 };
+
+  ['electric','water','gas'].forEach(type=>{
+    const source = (pieCache30d[type] && pieCache30d[type].length) ? pieCache30d[type] : (dataCache[type]||[]);
+    const raw = source
+      .map(d=>({t:new Date(d.timestamp).getTime(), v:Number(d.value)}))
+      .filter(d=>d.t>=start.getTime() && d.t<=now.getTime())
+      .sort((a,b)=>a.t-b.t);
+
+    for(let i=1;i<raw.length;i++){
+      const t0 = raw[i-1].t, t1 = raw[i].t;
+      const v0 = raw[i-1].v, v1 = raw[i].v;
+      const dtMs = t1 - t0; if(dtMs<=0) continue;
+
+      if (type==='electric'){
+        const hours = dtMs/3600000;
+        const avgKW = (v0+v1)/2;
+        totals.electric += avgKW * hours; // kWh
+      }
+      if (type==='water'){
+        const minutes = dtMs/60000;
+        const avgLpm = (v0+v1)/2;
+        totals.water += (avgLpm * minutes) / 1000; // m³
+      }
+      if (type==='gas'){
+        const hours = dtMs/3600000;
+        const avg_m3ph = (v0+v1)/2;
+        totals.gas += avg_m3ph * hours; // m³
+      }
+    }
+  });
+
+  return totals;
+}
+
+/** ===== 渲染（根据 activeChart） ===== */
+function renderFromCache(){
+  if (activeChart === 'line') renderLine();
+  else if (activeChart === 'pie-current') renderPieCurrent();
+  else if (activeChart === 'pie-period') renderPiePeriod();
+  else if (activeChart === 'bar-usage') renderBarUsage();
+
+  // 如果已有预测数据，重绘下方预测图
+  if (hasAnyForecast()) renderForecast();
+}
+
+function baseDataZoom(){
+  return [
+    { type:'inside', throttle:50 },
+    { type:'slider' }
+  ];
+}
+
+function renderLine(){
+  detachBarHoverEvents();
+  const gran = Number(document.getElementById('gran').value);
+  const seriesData = resample(dataCache[activeType], gran);
+
+  let maxVal = 0;
+  for (const p of seriesData){ if (typeof p[1] === 'number' && !isNaN(p[1])) maxVal = Math.max(maxVal, p[1]); }
+  let yMax = Math.ceil(maxVal * 1.1) || 1;
+
+  chart.clear();
+  chart.setOption({
+    title: { text: `${typeName(activeType)}（${TYPE_UNITS[activeType]}）` },
+    tooltip: { trigger: 'axis' },
+    legend: { data: ['值'] },
+    dataZoom: baseDataZoom(),
+    xAxis: { type:'time', axisLabel:{ formatter: formatAxisLabel } },
+    yAxis: { type:'value', min: 0, max: yMax },
+    series: [
+      { id:'baseLine', name:'值', type:'line', showSymbol:false, data: seriesData }
+    ]
+  }, { notMerge:true });
+}
+
+function renderPieCurrent(){
+  detachBarHoverEvents();
+  const { total } = integrateCostLast30Days();
+  chart.clear();
+  chart.setOption({
+    title:{ text:'最近30天费用占比（电/水/气）', left:'center' },
+    tooltip:{ trigger:'item', formatter:'{b}: {c|{c}} 元 ({d}%)', extraCssText:'text-align:left' },
+    series:[{
+      type:'pie', radius:['45%','70%'],
+      label:{ formatter: '{b}\n{c|{c}} 元\n{d}%', rich:{ c:{fontWeight:'700'} } },
+      data:[
+        { name:'电费', value: Number(total.electric.toFixed(2)) },
+        { name:'水费', value: Number(total.water.toFixed(2)) },
+        { name:'气费', value: Number(total.gas.toFixed(2)) }
+      ]
+    }]
+  }, { notMerge:true });
+}
+
+function renderPiePeriod(){
+  detachBarHoverEvents();
+  const { weekly } = integrateCostLast30Days();
+  chart.clear();
+  chart.setOption({
+    title:{ text:'最近30天分周费用占比', left:'center' },
+    tooltip:{ trigger:'item', formatter:'{b}: {c} 元 ({d}%)' },
+    series:[{
+      type:'pie', radius:['45%','70%'],
+      data: weekly.map((v,i)=>({ name:`第${i+1}周`, value:Number(v.toFixed(2)) }))
+    }]
+  }, { notMerge:true });
+}
+
+/** ===== 月用量柱状图（最近30天） ===== */
+function renderBarUsage(){
+  detachBarHoverEvents();
+
+  const totals = integrateUsageLast30Days();
+  const vElec = Number(totals.electric.toFixed(2));
+  const vWater = Number(totals.water.toFixed(2));
+  const vGas = Number(totals.gas.toFixed(2));
+
+  chart.clear();
+  chart.setOption({
+    title:{ text:'最近30天总用量（电/水/气）', left:'center' },
+    grid:{ left:'6%', right:'4%', top:60, bottom:40, containLabel:true },
+    tooltip:{
+      trigger:'item',
+      formatter(p){
+        const unit = p.name.includes('电') ? 'kWh' : 'm³';
+        return `${p.name}<br/>用量：${p.value} ${unit}`;
+      }
+    },
+    xAxis:{
+      type:'category',
+      data:['电(kWh)','水(m³)','气(m³)'],
+      axisTick:{ alignWithLabel:true }
+    },
+    yAxis:{
+      type:'value',
+      splitLine:{ lineStyle:{ type:'dashed', opacity:.6 } },
+      axisLine:{ show:false }
+    },
+    series:[{
+      id:'usageBar',
+      type:'bar',
+      barMaxWidth:68,
+      label:{
+        show:true,
+        position:'top',
+        formatter:'{c}',
+        fontWeight:'600'
+      },
+      data:[
+        {
+          value:vElec,
+          name:'电(kWh)',
+          itemStyle:{
+            color: new echarts.graphic.LinearGradient(0,1,0,0, [
+              { offset: 0, color: '#fff0f6' },
+              { offset: 1, color: '#ff2d95' }
+            ]),
+            borderRadius:[10,10,0,0],
+            shadowBlur:12, shadowColor:'rgba(255,45,149,0.18)'
+          }
+        },
+        {
+          value:vWater,
+          name:'水(m³)',
+          itemStyle:{
+            color: new echarts.graphic.LinearGradient(0,1,0,0, [
+              { offset: 0, color: '#e6fffb' },
+              { offset: 1, color: '#00c2d1' }
+            ]),
+            borderRadius:[10,10,0,0],
+            shadowBlur:12, shadowColor:'rgba(0,194,209,0.18)'
+          }
+        },
+        {
+          value:vGas,
+          name:'气(m³)',
+          itemStyle:{
+            color: new echarts.graphic.LinearGradient(0,1,0,0, [
+              { offset: 0, color: '#f5eeff' },
+              { offset: 1, color: '#8b5cf6' }
+            ]),
+            borderRadius:[10,10,0,0],
+            shadowBlur:12, shadowColor:'rgba(139,92,246,0.16)'
+          }
+        }
+      ]
+    }]
+  }, { notMerge:true });
+
+  function getGridPx(){
+    const opt = chart.getOption();
+    const g = (opt && opt.grid && opt.grid[0]) || { left:'6%', right:'4%' };
+    let gridLeft = 40, gridRight = 40;
+    try{
+      if (g.left){
+        if (typeof g.left === 'string' && g.left.endsWith('%')) gridLeft = parseFloat(g.left)/100 * chart.getWidth();
+        else gridLeft = Number(g.left);
+      }
+      if (g.right){
+        if (typeof g.right === 'string' && g.right.endsWith('%')) gridRight = parseFloat(g.right)/100 * chart.getWidth();
+        else gridRight = Number(g.right);
+      }
+    }catch(e){}
+    return { gridLeft, gridRight };
+  }
+
+  barHoverHandler = function(params){
+    if (activeChart !== 'bar-usage') return;
+    if (params.componentType === 'series' && params.seriesType === 'bar'){
+      const yVal = Number(params.value);
+      const category = params.name || (params.data && params.data.name) || '';
+      if (lastHoverValue !== null && Number(lastHoverValue) === Number(yVal)) return;
+      lastHoverValue = yVal;
+
+      let pixel;
+      try{ pixel = chart.convertToPixel({ xAxisIndex:0, yAxisIndex:0 }, [category, yVal]); }
+      catch(e){ pixel = [0, 0]; }
+      const yPx = (pixel && pixel[1]) ? pixel[1] : chart.getHeight() / 2;
+
+      const { gridLeft, gridRight } = getGridPx();
+      const plotRight = chart.getWidth() - gridRight;
+      const plotLeft = gridLeft;
+
+      const unit = category && category.includes('电') ? 'kWh' : 'm³';
+      const labelText = `${yVal.toFixed(2)} ${unit}`;
+      const approxWidth = Math.max(72, labelText.length * 8 + 20);
+      const labelH = 26;
+      const labelLeft = Math.max(6, Math.floor(plotLeft + 6));
+      let labelTop = Math.floor(yPx - labelH/2);
+      labelTop = Math.max(6, Math.min(labelTop, chart.getHeight() - labelH - 6));
+
+      const lineX1 = plotLeft;
+      const lineX2 = plotRight;
+
+      chart.setOption({
+        graphic: [
+          { id: 'hoverLine', type: 'line', shape: { x1: lineX1, y1: yPx, x2: lineX2, y2: yPx }, style: { stroke: 'rgba(15,23,42,0.48)', lineDash: [6,4], lineWidth: 1.2 }, silent: true },
+          { id: 'hoverLabelBg', type: 'rect', left: labelLeft, top: labelTop, shape: { width: approxWidth, height: labelH }, style: { fill: 'rgba(255,255,255,0.95)', r:6 }, silent: true },
+          { id: 'hoverLabelText', type: 'text', left: labelLeft + 10, top: labelTop + (labelH/2) + 4, style: { text: labelText, fill: '#0f172a', font: '600 12px sans-serif' }, silent: true }
+        ]
+      });
+    }
+  };
+
+  barGlobalOutHandler = function(){
+    if (activeChart !== 'bar-usage') return;
+    lastHoverValue = null;
+    chart.setOption({ graphic: [] });
+  };
+
+  chart.on('mouseover', barHoverHandler);
+  chart.on('globalout', barGlobalOutHandler);
+}
+
+/** =======================
+ *       预测相关
+ *  =======================*/
+
+/** 单位（累计量） */
+function unitForAmount(type){
+  if (type==='electric') return 'kWh';
+  return 'm³'; // water/gas
+}
+
+/** 把预测点积分为“用量”（kWh/m³），同时可给出上下界 */
+function integrateForecastAmount(points, type){
+  if (!Array.isArray(points) || points.length < 2) return { value:0, lower:0, upper:0 };
+  let value=0, lower=0, upper=0;
+  for (let i=1;i<points.length;i++){
+    const t0 = new Date(points[i-1].timestamp).getTime();
+    const t1 = new Date(points[i].timestamp).getTime();
+    const dt = t1 - t0; if (dt<=0) continue;
+    const y0 = Number(points[i-1].yhat), y1 = Number(points[i].yhat);
+    const l0 = Number(points[i-1].yhat_lower ?? y0), l1 = Number(points[i].yhat_lower ?? y1);
+    const u0 = Number(points[i-1].yhat_upper ?? y0), u1 = Number(points[i].yhat_upper ?? y1);
+
+    let mul;
+    if (type==='electric'){ // kW → kWh
+      mul = dt/3600000;
+    }else if (type==='water'){ // L/min → m³
+      mul = (dt/60000)/1000;
+    }else{ // gas m³/h → m³
+      mul = dt/3600000;
+    }
+    value += ((y0+y1)/2) * mul;
+    lower += ((l0+l1)/2) * mul;
+    upper += ((u0+u1)/2) * mul;
+  }
+  return {
+    value: Number(value.toFixed(3)),
+    lower: Number(lower.toFixed(3)),
+    upper: Number(upper.toFixed(3))
+  };
+}
+
+/** 预测成本（用量×单价） */
+function integrateForecastCost(points, type){
+  const amt = integrateForecastAmount(points, type);
+  const price = prices[type] || 0;
+  return {
+    value: Number((amt.value * price).toFixed(2)),
+    lower: Number((amt.lower * price).toFixed(2)),
+    upper: Number((amt.upper * price).toFixed(2))
+  };
+}
+
+/** 等分分段聚合（用于“分时占比”预测饼图；默认4段） */
+function segmentForecastCost(points, type, segments=4){
+  if (!Array.isArray(points) || points.length < 2) return Array(segments).fill(0);
+  const tStart = new Date(points[0].timestamp).getTime();
+  const tEnd   = new Date(points[points.length-1].timestamp).getTime();
+  const segMs = (tEnd - tStart) / segments;
+  const arr = Array(segments).fill(0);
+
+  for (let i=1;i<points.length;i++){
+    const t0 = new Date(points[i-1].timestamp).getTime();
+    const t1 = new Date(points[i].timestamp).getTime();
+    const y0 = Number(points[i-1].yhat);
+    const y1 = Number(points[i].yhat);
+    const mid = (t0+t1)/2;
+    let idx = Math.floor((mid - tStart) / segMs);
+    if (idx<0) idx=0; if (idx>segments-1) idx=segments-1;
+
+    // 先算“量”
+    let amount = 0;
+    if (type==='electric'){
+      amount = ((y0+y1)/2) * ((t1-t0)/3600000);
+    }else if (type==='water'){
+      amount = ((y0+y1)/2) * ((t1-t0)/60000) / 1000;
+    }else{
+      amount = ((y0+y1)/2) * ((t1-t0)/3600000);
+    }
+
+    // 乘单价得到“费用”
+    arr[idx] += amount * (prices[type]||0);
+  }
+  return arr.map(v=>Number(v.toFixed(2)));
+}
+
+/** 判断是否已有任意预测 */
+function hasAnyForecast(){
+  return !!(forecastCache.electric || forecastCache.water || forecastCache.gas);
+}
+
+/** 渲染下方“预测图表”，随 activeChart 变化（并与原图等高） */
+function renderForecast(){
+  const box = document.getElementById('forecastBox');
+  const titleEl = document.getElementById('forecastTitle');
+  const msgEl = document.getElementById('forecastMsg');
+  const horizon = lastForecastParams.horizon || Number(document.getElementById('forecastHorizon').value || 24);
+  const horizonLabel = hoursToLabel(horizon);
+
+  if (!hasAnyForecast()){
+    box.style.display = 'none';
+    return;
+  }
+
+  box.style.display = 'block';
+  syncForecastHeight();        // 同步高度
+  forecastChart.clear();
+
+  // —— 折线图：画预测折线（单类型）
+  if (activeChart === 'line'){
+    const data = forecastCache[activeType];
+    if (!data || !data.points || !data.points.length){ msgEl.textContent='暂无预测数据'; return; }
+
+    const line  = data.points.map(p => [new Date(p.timestamp).getTime(), Number(p.yhat)]);
+    const lower = data.points.map(p => [new Date(p.timestamp).getTime(), Number(p.yhat_lower ?? p.yhat)]);
+    const upper = data.points.map(p => [new Date(p.timestamp).getTime(), Number(p.yhat_upper ?? p.yhat)]);
+
+    titleEl.textContent = `${typeName(activeType)} · ${horizonLabel}预测`;
+    forecastChart.setOption({
+      tooltip:{ trigger:'axis' },
+      legend:{ data:['预测','下界','上界'] },
+      dataZoom: baseDataZoom(),
+      xAxis:{ type:'time' },
+      yAxis:{ type:'value' },
+      series:[
+        { name:'预测', type:'line', showSymbol:false, data: line,   lineStyle:{ type:'dashed' } },
+        { name:'下界', type:'line', showSymbol:false, data: lower, lineStyle:{ type:'dotted' } },
+        { name:'上界', type:'line', showSymbol:false, data: upper, lineStyle:{ type:'dotted' } }
+      ]
+    });
+
+    const amt = integrateForecastAmount(data.points, activeType);
+    msgEl.textContent = `预测区间总量 ≈ ${amt.value} ${unitForAmount(activeType)}（范围 ${amt.lower} ~ ${amt.upper}）`;
+    return;
+  }
+
+  // —— 当前占比饼图：三类型的“预测费用占比”
+  if (activeChart === 'pie-current'){
+    const need = ['electric','water','gas'];
+    for (const t of need){ if (!forecastCache[t] || !forecastCache[t].points){ msgEl.textContent='预测数据不完整'; return; } }
+    const costE = integrateForecastCost(forecastCache.electric.points, 'electric').value;
+    const costW = integrateForecastCost(forecastCache.water.points, 'water').value;
+    const costG = integrateForecastCost(forecastCache.gas.points, 'gas').value;
+
+    titleEl.textContent = `${horizonLabel}预测 · 费用占比（电/水/气）`;
+    forecastChart.setOption({
+      tooltip:{ trigger:'item', formatter:'{b}: {c} 元 ({d}%)' },
+      series:[{
+        type:'pie', radius:['45%','70%'],
+        data:[
+          { name:'电费', value:Number(costE.toFixed(2)) },
+          { name:'水费', value:Number(costW.toFixed(2)) },
+          { name:'气费', value:Number(costG.toFixed(2)) },
+        ]
+      }]
+    });
+
+    const total = Number((costE+costW+costG).toFixed(2));
+    msgEl.textContent = `预测区间总费用 ≈ ${total} 元`;
+    return;
+  }
+
+  // —— 分时占比饼图：单类型“预测分段费用占比”（4段）
+  if (activeChart === 'pie-period'){
+    const data = forecastCache[activeType];
+    if (!data || !data.points || !data.points.length){ msgEl.textContent='暂无预测数据'; return; }
+    const seg = segmentForecastCost(data.points, activeType, 4);
+
+    titleEl.textContent = `${typeName(activeType)} · ${horizonLabel}预测 · 分段费用占比`;
+    forecastChart.setOption({
+      tooltip:{ trigger:'item', formatter:'{b}: {c} 元 ({d}%)' },
+      series:[{
+        type:'pie', radius:['45%','70%'],
+        data: seg.map((v,i)=>({ name:`第${i+1}段`, value:Number(v.toFixed(2)) }))
+      }]
+    });
+
+    const cost = integrateForecastCost(data.points, activeType);
+    msgEl.textContent = `预测区间费用 ≈ ${cost.value} 元（范围 ${cost.lower} ~ ${cost.upper}）`;
+    return;
+  }
+
+  // —— 月用量柱状图：三类型“预测总用量”对比
+  if (activeChart === 'bar-usage'){
+    const need = ['electric','water','gas'];
+    for (const t of need){ if (!forecastCache[t] || !forecastCache[t].points){ msgEl.textContent='预测数据不完整'; return; } }
+
+    const aE = integrateForecastAmount(forecastCache.electric.points, 'electric').value;
+    const aW = integrateForecastAmount(forecastCache.water.points, 'water').value;
+    const aG = integrateForecastAmount(forecastCache.gas.points, 'gas').value;
+
+    titleEl.textContent = `${horizonLabel}预测 · 总用量（电/水/气）`;
+    forecastChart.setOption({
+      grid:{ left:'8%', right:'4%', top:40, bottom:40, containLabel:true },
+      tooltip:{ trigger:'item' },
+      xAxis:{ type:'category', data:['电(kWh)','水(m³)','气(m³)'] },
+      yAxis:{ type:'value', splitLine:{ lineStyle:{ type:'dashed', opacity:.6 } } },
+      series:[{
+        type:'bar',
+        barMaxWidth:58,
+        label:{ show:true, position:'top' },
+        data:[
+          Number(aE.toFixed(2)),
+          Number(aW.toFixed(2)),
+          Number(aG.toFixed(2)),
+        ]
+      }]
+    });
+
+    msgEl.textContent = `预测区间总用量：电 ${aE.toFixed(2)} kWh · 水 ${aW.toFixed(2)} m³ · 气 ${aG.toFixed(2)} m³`;
+    return;
+  }
+}
+
+/** ===== 交互绑定 ===== */
+// 左侧图表切换
+document.querySelectorAll('.chart-btn').forEach(btn=>{
+  btn.addEventListener('click', async ()=>{
+    document.querySelectorAll('.chart-btn').forEach(b=>b.classList.remove('active'));
+    btn.classList.add('active');
+    activeChart = btn.dataset.chart;
+
+    if (activeChart === 'pie-current' || activeChart === 'pie-period' || activeChart === 'bar-usage'){
+      await fetch30dForPies();
+    }
+
+    renderFromCache();
+  });
+});
+
+// 顶部能源标签切换（影响折线图 & 实时值 & 预测图）
+document.querySelectorAll('.tab').forEach(btn => {
+  btn.addEventListener('click', () => {
+    document.querySelectorAll('.tab').forEach(b => b.classList.remove('active'));
+    btn.classList.add('active');
+    activeType = btn.dataset.type;
+    document.getElementById('unit').innerText = TYPE_UNITS[activeType];
+    threshold = Number(document.getElementById('threshold').value) || DEFAULT_THRESHOLDS[activeType];
+    lastRtTs = 0;
+    rtReqId++;
+    renderFromCache();
+    fetchLatestValue();
+  });
+});
+
+// 快捷范围
+document.querySelectorAll('[data-range]').forEach(btn => btn.onclick = () => {
+  document.querySelectorAll('[data-range]').forEach(b=>b.classList.remove('active'));
+  btn.classList.add('active');
+
+  activeRange = btn.dataset.range;
+  const now = new Date();
+  let start;
+  if (activeRange==='day') start = new Date(now.getTime() - 24*3600*1000);
+  if (activeRange==='week') start = new Date(now.getTime() - 7*24*3600*1000);
+  if (activeRange==='month') start = new Date(now.getTime() - 30*24*3600*1000);
+  setInputs(start, now);
+  fetchAllData();
+  if (activeChart==='line'){
+    chart.setOption({ xAxis: { axisLabel: { formatter: formatAxisLabel } } });
+  }
+});
+
+document.getElementById('applyRange').onclick = () => fetchAllData();
+document.getElementById('gran').onchange = () => { if(activeChart==='line') renderFromCache(); };
+document.getElementById('applyThreshold').onclick = () => {
+  threshold = Number(document.getElementById('threshold').value) || DEFAULT_THRESHOLDS[activeType];
+  document.getElementById('hint').innerText = `当前阈值：${threshold} ${TYPE_UNITS[activeType]}`;
+};
+document.getElementById('applyPrice').onclick = () => {
+  prices.electric = Number(document.getElementById('priceElectric').value);
+  prices.water    = Number(document.getElementById('priceWater').value);
+  prices.gas      = Number(document.getElementById('priceGas').value);
+  if (activeChart!=='line') renderFromCache();
+};
+
+// ✅ 预测按钮绑定（仅预测“当前选中的图”所需的类型）
+document.getElementById('btnForecast').onclick = () => fetchForecastCurrent();
+document.getElementById('btnClearForecast').onclick = () => clearForecast();
+
+// 导出与保存
+document.getElementById('btnCsv').onclick = () => exportCSV();
+document.getElementById('btnPng').onclick = () => downloadPNG();
+
+/** ===== Data IO ===== */
+async function fetchAllData(){
+  const {start, end} = getRange();
+  // ★ 使用“本地时间字符串”传参，避免 UTC 偏移导致日视图取不到数据
+  const qs = `start=${encodeURIComponent(toLocal(start))}&end=${encodeURIComponent(toLocal(end))}`;
+  const types = ['electric','water','gas'];
+  try{
+    const results = await Promise.all(types.map(t => fetch(`/api/history/${t}?${qs}`).then(r=>r.json())));
+    types.forEach((t,i)=>{ dataCache[t] = Array.isArray(results[i])? results[i] : []; });
+  }catch(e){
+    // 网络错误时保留旧缓存
+  }
+  renderFromCache();
+}
+
+// 最近30天数据给饼图/柱状图用
+async function fetch30dForPies(){
+  const now = new Date();
+  const start = new Date(now.getTime() - 30*24*3600*1000);
+  // ★ 同样用本地时间字符串
+  const qs = `start=${encodeURIComponent(toLocal(start))}&end=${encodeURIComponent(toLocal(now))}`;
+  const types = ['electric','water','gas'];
+  try{
+    const results = await Promise.all(types.map(t => fetch(`/api/history/${t}?${qs}`).then(r=>r.json())));
+    types.forEach((t,i)=>{ pieCache30d[t] = Array.isArray(results[i])? results[i] : []; });
+  }catch(e){
+    // 保持原有缓存
+  }
+}
+
+async function fetchLatestValue(){
+  const myId = ++rtReqId;
+  try{
+    const res = await fetch(`/api/latest/${activeType}`);
+    const arr = await res.json();
+    if (myId !== rtReqId) return;
+    if (Array.isArray(arr) && arr.length){
+      const last = arr[arr.length-1];
+      updateRealtimeValue(last.value, new Date(last.timestamp).getTime());
+    }
+  }catch(e){}
+}
+
+/** ===== 预测 IO（只按当前选中图类型请求需要的数据） ===== */
+async function fetchForecastCurrent(){
+  const horizon = Number(document.getElementById('forecastHorizon').value || 24);
+  const freq = document.getElementById('forecastFreq').value || 'H';
+  lastForecastParams = { horizon, freq };
+
+  // 决定当下图形所需的类型集合
+  let typesNeeded = [];
+  if (activeChart === 'line' || activeChart === 'pie-period'){
+    typesNeeded = [activeType];
+  } else if (activeChart === 'pie-current' || activeChart === 'bar-usage'){
+    typesNeeded = ['electric','water','gas'];
+  }
+
+  try{
+    const results = await Promise.all(
+      typesNeeded.map(t =>
+        fetch(`/api/forecast/${t}?horizon_hours=${horizon}&freq=${encodeURIComponent(freq)}`).then(r=>{
+          if(!r.ok) throw new Error('接口错误');
+          return r.json();
+        })
+      )
+    );
+    typesNeeded.forEach((t,i)=>{ forecastCache[t] = results[i]; });
+
+    // 展示预测
+    renderForecast();
+    // 同步右侧提示
+    updateForecastHintForPanel();
+  }catch(err){
+    alert('预测失败：' + (err && err.message ? err.message : err));
+  }
+}
+
+function clearForecast(){
+  forecastCache = { electric: null, water: null, gas: null };
+  document.getElementById('forecastUsageHint').textContent = '—';
+  document.getElementById('forecastMsg').textContent = '—';
+  document.getElementById('forecastBox').style.display = 'none';
+  forecastChart.clear();
+}
+
+function updateForecastHintForPanel(){
+  const hint = document.getElementById('forecastUsageHint');
+  const horizon = lastForecastParams.horizon || Number(document.getElementById('forecastHorizon').value || 24);
+  const label = hoursToLabel(horizon);
+
+  if (!hasAnyForecast()){ hint.textContent='—'; return; }
+
+  if (activeChart === 'line' || activeChart === 'pie-period'){
+    const d = forecastCache[activeType];
+    if (d && d.points && d.points.length){
+      const amt = (activeChart==='line')
+        ? integrateForecastAmount(d.points, activeType)
+        : integrateForecastCost(d.points, activeType);
+      const unit = (activeChart==='line') ? unitForAmount(activeType) : '元';
+      hint.textContent = `${typeName(activeType)} · ${label}预测总${unit==='元'?'费用':'用量'} ≈ ${amt.value} ${unit}`;
+      return;
+    }
+  }
+
+  if (activeChart === 'pie-current'){
+    const e = forecastCache.electric, w = forecastCache.water, g = forecastCache.gas;
+    if (e && w && g){
+      const ce = integrateForecastCost(e.points, 'electric').value;
+      const cw = integrateForecastCost(w.points, 'water').value;
+      const cg = integrateForecastCost(g.points, 'gas').value;
+      hint.textContent = `${label}预测总费用 ≈ ${(ce+cw+cg).toFixed(2)} 元`;
+      return;
+    }
+  }
+
+  if (activeChart === 'bar-usage'){
+    const e = forecastCache.electric, w = forecastCache.water, g = forecastCache.gas;
+    if (e && w && g){
+      const ae = integrateForecastAmount(e.points, 'electric').value;
+      const aw = integrateForecastAmount(w.points, 'water').value;
+      const ag = integrateForecastAmount(g.points, 'gas').value;
+      hint.textContent = `${label}预测总用量：电 ${ae.toFixed(2)} kWh · 水 ${aw.toFixed(2)} m³ · 气 ${ag.toFixed(2)} m³`;
+      return;
+    }
+  }
+
+  hint.textContent = '—';
+}
+
+/** ===== 导出/保存 ===== */
+function exportCSV(){
+  const rawData = dataCache[activeType];
+  if (!rawData || rawData.length===0){ alert('没有数据可导出'); return; }
+  const header = 'timestamp,value\n';
+  const rows = rawData.map(d=>`${d.timestamp},${d.value}`);
+  const blob = new Blob([header + rows.join('\n')], {type: 'text/csv;charset=utf-8;'});
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `${activeType}_history.csv`;
+  document.body.appendChild(a);
+  a.click();
+  a.remove();
+}
+
+function downloadPNG(){
+  const url = chart.getDataURL({type:'png', pixelRatio:2, backgroundColor:'#fff'});
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `${activeType}_${activeChart}.png`;
+  a.click();
+}
+
+/** ===== 初始化 ===== */
+(function init(){
+  const now = new Date();
+  setInputs(new Date(now.getTime()-24*3600*1000), now);
+  document.getElementById('unit').innerText = TYPE_UNITS[activeType];
+  document.getElementById('threshold').value = DEFAULT_THRESHOLDS[activeType];
+
+  const dayBtn = document.querySelector('[data-range="day"]');
+  if (dayBtn) dayBtn.classList.add('active');
+
+  fetchAllData();
+  fetchLatestValue();
+
+  setInterval(() => { fetchLatestValue(); }, 5000);
+  window.addEventListener('resize', ()=>{
+    chart.resize();
+    syncForecastHeight();  // 跟随窗口变化保持等高
+    forecastChart.resize();
+  });
+
+  // 首次同步预测图高度（以防容器尺寸变化）
+  syncForecastHeight();
+})();
+</script>
+</body>
+</html>
